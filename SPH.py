@@ -1,36 +1,39 @@
 """
 Taichi SPH
 """
-
+import numpy as np
 import taichi as ti
-import math
 
 ti.init(arch = ti.cuda)
 
 ''' parameters '''
 
-num_particles = 256
+num_particles = 2500
 
 #delta t
-dt = 0.01
+dt = 0.001
 
 gravity = -50
 
 # interaction radius
-K_smoothingRadius = 20
+K_smoothingRadius = 1
 
 # stiffness
 K_stiff = 3000 # stiffness
-K_stiffN = 0 # stiffness near
+K_stiffN = 10000 # stiffness near
 
 # rest density
-K_restDensity = 5
+K_restDensity = 1.15
 
 restitution = -0.5
 
 # domain scale (0, 0) - (domain_size, domain_size)
 # used to convert positions into canvas coordinates
 domain_size = 100
+
+img = np.transpose(ti.imread("starry.jpg"), (1, 0, 2)).reshape(-1, 3)
+# rgb 2 hex
+img = img[:, 0] * 65536 + img[:, 1] * 256 + img[:, 2]
 
 ''' Fields '''
 # positions of particles
@@ -40,36 +43,37 @@ oldPos = ti.Vector.field(2, dtype = ti.f32, shape = num_particles) # old positio
 # velocities of particles
 vel = ti.Vector.field(2, dtype = ti.f32, shape = num_particles)
 
+col = ti.Vector.field(3, dtype = ti.i32, shape=num_particles)
+
 # density of particles
-dens = ti.field(dtype = ti.f32, shape = num_particles) # density
-densN = ti.field(dtype = ti.f32, shape = num_particles) # near density
+dens = ti.field(dtype = ti.f32, shape=num_particles) # density
+densN = ti.field(dtype = ti.f32, shape=num_particles) # near density
 
 # pressure of particles
-press = ti.field(dtype = ti.f32, shape = num_particles) # pressure
-pressN = ti.field(dtype = ti.f32, shape = num_particles) # near pressure
+press = ti.field(dtype = ti.f32, shape=num_particles) # density
+pressN = ti.field(dtype = ti.f32, shape=num_particles) # near density
 
 # pairs
-''' !!! CANNOT USE COMPUTED RESULT HERE !!! '''
-#max_pairs = (1 + num_particles)*num_particles/2
-max_pairs = 32896
-pair = ti.Vector.field(2, dtype = ti.i32, shape = max_pairs) # store indices of the two particles
-dist = ti.field(dtype = ti.f32, shape = max_pairs) # store distance for each pair
-num_pairs = 0
-
+max_pairs = (1 + num_particles) * num_particles // 2 # should be int
+#pair = ti.Vector.field(2, dtype=ti.i32, shape=(max_pairs,))
+#dist = ti.field(dtype=ti.f32, shape=(max_pairs,)) # store distance for each pair
 
 ''' initialize particle position & velocity '''
 @ti.kernel
 def init():
-    length = math.sqrt(num_particles) # arrange ini pos of the particles into a square
+    
+    length = ti.sqrt(num_particles)
     
     for i in range(num_particles):
         
         # place particles around the center of the domain
-        pos[i] = ti.Vector([i%length/length, i//length/length]) # (0 - 1) (0 - 1)
-        pos[i] = (pos[i] + 1)/2 - 0.25 # 0.25 - 0.75 (centered)
+        pos[i] = ti.Vector([i%length/length, i//length/length]) # 0 - 1
+        pos[i] = (pos[i] + 1)/2 - 0.05 + ti.random() * 0.001 # 0.25 - 0.75 (centered)
         pos[i] *= domain_size # scale to fit the domain
         
         oldPos[i] = pos[i]
+    print("dam grid spacing:", 0.5 / (num_particles) ** (1/2) * domain_size)
+    print("init density:", num_particles / (0.5 * domain_size) ** 2 )
         
         # initialize velocity to 0
         #vel[i] = ti.Vector([0, 0])
@@ -85,7 +89,7 @@ def update():
         vel[i] = (pos[i] - oldPos[i])/dt
         
         # collision handling?
-        #boundary_collision(i)
+        boundary_collision(i)
         
         # save previous position
         oldPos[i] = pos[i]
@@ -97,30 +101,24 @@ def update():
         dens[i] = 0
         densN[i] = 0
         
-      
-    
-    # compute pairs
-    num_pairs = 0
-    for i in range(num_particles - 1):
+
+
+    for i in range(num_particles):
         for j in range(i, num_particles):
+            if i == j:
+                dens[i] += 1
+                densN[i] += 1
+                continue
             dis = distance(pos[i], pos[j])
-            if  dis < K_smoothingRadius:
-                pair[num_pairs] = ti.Vector([i, j]) # indices
-                dist[num_pairs] = dis # distance between this pair
-                num_pairs += 1
-       
-    print(num_pairs) # but it doesn't print anything
-    
-    # compute density
-    for i in range(num_pairs):
-        q = 1 - dist[i] / K_smoothingRadius
-        q2 = q * q
-        q3 = q2 * q
-        
-        dens[pair[i][0]] += q2
-        dens[pair[i][1]] += q2
-        densN[pair[i][0]] += q3
-        densN[pair[i][1]] += q3
+            if 0 < dis < K_smoothingRadius:
+                q = 1 - dis / K_smoothingRadius
+                q2 = q * q
+                q3 = q2 * q
+                #print(dist[i], q)
+                dens[i] += q2
+                dens[j] += q2
+                densN[i] += q3
+                densN[j] += q3
         
     # update pressure
     for i in range(num_particles):
@@ -129,28 +127,28 @@ def update():
         
     
     # apply pressure
-    for i in range(num_pairs):
-        # index of particle a & b
-        a = pair[i][0]
-        b = pair[i][1]
-        
-        p = press[a] + press[b]
-        pN = pressN[a] + pressN[b]
-        
-        q = 1 - dist[i] / K_smoothingRadius
-        q2 = q * q
-        
-        displace = (p * q + pN * q2) * (dt * dt)
-        a2bN = (pos[pair[i][1]] - pos[pair[i][0]])/dist[i]
-        
-        pos[a] += displace * a2bN
-        pos[b] -= displace * a2bN
-        
-    # boundary collisoin
-    ''' 
     for i in range(num_particles):
-        boundary_collision(i)
-    '''
+        for j in range(i, num_particles):
+            if i == j:
+                continue
+            dis = distance(pos[i], pos[j])
+            if 0 < dis < K_smoothingRadius:
+                # index of particle i & j
+                p = press[i] + press[j]
+                pN = pressN[i] + pressN[j]
+        
+                q = 1 - dis / K_smoothingRadius
+                q2 = q * q
+                
+                displace = (p * q + pN * q2) * (dt * dt)
+                a2bN = (pos[i] - pos[j]) / dis
+                
+                pos[i] += displace * a2bN
+                pos[j] -= displace * a2bN
+        
+    # boundary collision
+    #for i in range(num_particles):
+    #    boundary_collision(i)
     
         
 
@@ -158,7 +156,7 @@ def update():
 ''' handle particle collision with boundary '''
 @ti.func
 def boundary_collision(index):
-        
+
     # x boundary
     if pos[index][0] < 0:
         pos[index][0] = 0
@@ -184,19 +182,19 @@ def distance(v1, v2):
     
 
 def main():
-    gui = ti.GUI('SPH Fluid', background_color = 0xDDDDDD)
-    
+    gui = ti.GUI('SPH Fluid', 768, background_color = 0xDDDDDD)
     init()
     
     while True:
         
-        P = pos.to_numpy()
-        
-        update()
+        gui.clear(0xDDDDDD)
+        for _ in range(10):
+            update()
+        gui.circles(pos.to_numpy() / domain_size, radius=5, color=img)
+        #for _ in range(1):
         
         # draw particle
-        for p in P:
-            gui.circle(p/domain_size, color = 0x33BBFF, radius = 5)
+        
             
         gui.show()
             
