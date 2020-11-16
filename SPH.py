@@ -17,11 +17,11 @@ dt = 0.01
 gravity = -50
 
 # interaction radius
-K_smoothingRadius = 0.00001
+K_smoothingRadius = 20
 
 # stiffness
 K_stiff = 3000 # stiffness
-K_stiffN = 10000 # stiffness near
+K_stiffN = 0 # stiffness near
 
 # rest density
 K_restDensity = 5
@@ -29,6 +29,7 @@ K_restDensity = 5
 restitution = -0.5
 
 # domain scale (0, 0) - (domain_size, domain_size)
+# used to convert positions into canvas coordinates
 domain_size = 100
 
 ''' Fields '''
@@ -44,14 +45,14 @@ dens = ti.field(dtype = ti.f32, shape = num_particles) # density
 densN = ti.field(dtype = ti.f32, shape = num_particles) # near density
 
 # pressure of particles
-press = ti.field(dtype = ti.f32, shape = num_particles) # density
-pressN = ti.field(dtype = ti.f32, shape = num_particles) # near density
+press = ti.field(dtype = ti.f32, shape = num_particles) # pressure
+pressN = ti.field(dtype = ti.f32, shape = num_particles) # near pressure
 
 # pairs
 ''' !!! CANNOT USE COMPUTED RESULT HERE !!! '''
 #max_pairs = (1 + num_particles)*num_particles/2
 max_pairs = 32896
-pair = ti.Vector.field(2, dtype = ti.i32, shape = max_pairs)
+pair = ti.Vector.field(2, dtype = ti.i32, shape = max_pairs) # store indices of the two particles
 dist = ti.field(dtype = ti.f32, shape = max_pairs) # store distance for each pair
 num_pairs = 0
 
@@ -59,12 +60,12 @@ num_pairs = 0
 ''' initialize particle position & velocity '''
 @ti.kernel
 def init():
-    length = math.sqrt(num_particles)
+    length = math.sqrt(num_particles) # arrange ini pos of the particles into a square
     
     for i in range(num_particles):
         
         # place particles around the center of the domain
-        pos[i] = ti.Vector([i%length/length, i//length/length]) # 0 - 1
+        pos[i] = ti.Vector([i%length/length, i//length/length]) # (0 - 1) (0 - 1)
         pos[i] = (pos[i] + 1)/2 - 0.25 # 0.25 - 0.75 (centered)
         pos[i] *= domain_size # scale to fit the domain
         
