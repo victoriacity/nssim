@@ -58,6 +58,11 @@ max_pairs = (1 + num_particles) * num_particles // 2 # should be int
 #pair = ti.Vector.field(2, dtype=ti.i32, shape=(max_pairs,))
 #dist = ti.field(dtype=ti.f32, shape=(max_pairs,)) # store distance for each pair
 
+# Eularian grid
+grid_size = domain_size // K_smoothingRadius # The grid has size (grid_size, grid_size)
+grid_v = ti.Vector.field(2, dtype = ti.f32, shape = (grid_size, grid_size)) # grid to store P2G attributes
+grid_w = ti.field(dtype = ti.f32, shape = (grid_size, grid_size)) # grid to store the sum of weights
+
 ''' initialize particle position & velocity '''
 @ti.kernel
 def init():
@@ -100,7 +105,9 @@ def update():
         # clear density
         dens[i] = 0
         densN[i] = 0
-        
+      
+    # Lagrangian to Eularian
+    P2G()      
 
 
     for i in range(num_particles):
@@ -173,12 +180,37 @@ def boundary_collision(index):
         pos[index][1] = domain_size
         vel[index][1] *= restitution
         
-            
+''' helper function to compute distance between two points '''         
 @ti.func
 def distance(v1, v2):
     dv = v1 - v2
     dis = dv.norm()
     return dis
+    
+
+
+''' Lagrangian to Eularian representation '''
+@ti.func
+def P2G(): # possible argument list (source attribute field, target grid field)
+    for i in range(num_particles):
+        inv_dx = 1 / K_smoothingRadius
+        base = (pos[i] * inv_dx - 0.5).cast(int)
+        fx = pos[i] * inv_dx - base.cast(float)
+        # quadratic B-spline
+        w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
+        for j in ti.static(range(3)):
+            for k in ti.static(range(3)):
+                offset = ti.Vector([j, k])
+                weight = w[j][0] * w[j][1]
+                
+                grid_v[base + offset] += weight * vel[i] # change grid_v to target grid and vel to source attribute
+                grid_w[base + offset] += weight
+                
+    for i, j in grid_w:
+        if grid_w[i, j] > 0:
+            inv_w = 1 / grid_w[i, j]
+            grid_v[i, j] = inv_w * grid_v[i, j] # change this grid_v as well
+    
     
 
 def main():
