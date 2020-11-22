@@ -16,14 +16,14 @@ dt = 0.001
 gravity = -50
 
 # interaction radius
-K_smoothingRadius = 1
+K_smoothingRadius = 2
 
 # stiffness
-K_stiff = 3000 # stiffness
-K_stiffN = 10000 # stiffness near
+K_stiff = 1000 # stiffness
+K_stiffN = 2000 # stiffness near
 
 # rest density
-K_restDensity = 1.15
+K_restDensity = 4
 
 restitution = -0.5
 
@@ -31,7 +31,8 @@ restitution = -0.5
 # used to convert positions into canvas coordinates
 domain_size = 100
 
-img = np.transpose(ti.imread("starry.jpg"), (1, 0, 2)).reshape(-1, 3)
+#img = np.transpose(ti.imread("starry.jpg"), (1, 0, 2)).reshape(-1, 3)
+img = np.zeros((50, 50, 3)).reshape(-1, 3) + 255
 # rgb 2 hex
 img = img[:, 0] * 65536 + img[:, 1] * 256 + img[:, 2]
 
@@ -60,6 +61,7 @@ max_pairs = (1 + num_particles) * num_particles // 2 # should be int
 
 # Eularian grid
 grid_size = domain_size // K_smoothingRadius # The grid has size (grid_size, grid_size)
+print("grid size:", grid_size)
 grid_v = ti.Vector.field(2, dtype = ti.f32, shape = (grid_size, grid_size)) # grid to store P2G attributes
 grid_w = ti.field(dtype = ti.f32, shape = (grid_size, grid_size)) # grid to store the sum of weights
 
@@ -192,6 +194,7 @@ def distance(v1, v2):
 ''' Lagrangian to Eularian representation '''
 @ti.func
 def P2G(): # possible argument list (source attribute field, target grid field)
+
     for i in range(num_particles):
         inv_dx = 1 / K_smoothingRadius
         base = (pos[i] * inv_dx - 0.5).cast(int)
@@ -214,21 +217,29 @@ def P2G(): # possible argument list (source attribute field, target grid field)
     
 
 def main():
-    gui = ti.GUI('SPH Fluid', 768, background_color = 0xDDDDDD)
+    gui = ti.GUI('SPH Fluid', 768, background_color = 0x000000)
+    gui_g1 = ti.GUI('grid_m', grid_size, background_color = 0x000000)
+    gui_g2 = ti.GUI('grid_v', grid_size, background_color = 0x000000)
     init()
     
     while True:
         
-        gui.clear(0xDDDDDD)
-        for _ in range(10):
+        gui.clear(0x000000)
+        for _ in range(15):
+            grid_w.fill(0)
+            grid_v.fill(0)
             update()
-        gui.circles(pos.to_numpy() / domain_size, radius=5, color=img)
+        gui.circles(pos.to_numpy() / domain_size, radius=6, color=img)
         #for _ in range(1):
         
         # draw particle
         
-            
+        grid_w_np = grid_w.to_numpy()    
         gui.show()
+        gui_g1.set_image(grid_w_np / np.max(grid_w_np))
+        gui_g2.set_image(grid_v)
+        gui_g1.show()
+        gui_g2.show()
             
         
 if __name__ == '__main__':
