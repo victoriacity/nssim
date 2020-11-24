@@ -9,8 +9,8 @@ ti.init(arch=ti.cuda)
 
 ''' parameters '''
 
-num_particles = 8192
-grid_size = 128
+num_particles = 32768
+grid_size = 192
 
 domain_size = 1
 
@@ -21,8 +21,8 @@ particle_mass = particle_vol * particle_rho
 E = 400
 
 # delta t
-lr = 10
-dt = 0.0001
+lr = 20
+dt = 0.00008
 
 gravity = -9.8
 
@@ -35,19 +35,19 @@ img = img[:, 0] * 65536 + img[:, 1] * 256 + img[:, 2]
 
 ''' Fields '''
 # positions of particles
-pos = ti.Vector.field(2, dtype=ti.f32, shape=num_particles)  # current position
+pos = ti.Vector.field(2, dtype=ti.f32, shape=num_particles, needs_grad=True)  # current position
 
 # velocities of particles
-vel = ti.Vector.field(2, dtype=ti.f32, shape=num_particles)
+vel = ti.Vector.field(2, dtype=ti.f32, shape=num_particles, needs_grad=True)
 # affine velocity field
-aff = ti.Matrix.field(DIM, DIM, dtype=ti.f32, shape=num_particles)
+aff = ti.Matrix.field(DIM, DIM, dtype=ti.f32, shape=num_particles, needs_grad=True)
 # volume deformation
 J = ti.field(dtype=ti.f32, shape=num_particles)
 
 # Eularian grid
 
-grid_v = ti.Vector.field(2, dtype=ti.f32, shape=(grid_size, grid_size))
-grid_m = ti.field(dtype=ti.f32, shape=(grid_size, grid_size))
+grid_v = ti.Vector.field(2, dtype=ti.f32, shape=(grid_size, grid_size), needs_grad=True)
+grid_m = ti.field(dtype=ti.f32, shape=(grid_size, grid_size), needs_grad=True)
 
 inv_dx = grid_size / domain_size
 
@@ -82,27 +82,34 @@ def particle_init():
         length = ti.sqrt(num_particles)
         # place particles around the center of the domain
         pos[i] = ti.Vector([i % length / length, i // length / length])  # 0 - 1
-        pos[i] = (pos[i] + 1) / 2 - 0.05 + ti.random() * 0.001  # 0.25 - 0.75 (centered)
+        pos[i] = (pos[i] + 1) / 2 - 0.05# + ti.random() * 0.001  # 0.25 - 0.75 (centered)
         pos[i] *= domain_size  # scale to fit the domain
         J[i] = 1
 
 
 # ====================================================
-''' update particle state '''
 
-def update():
-    # clear grid
+
+
+def optimize():
     clear_grid()
-
-    #for _ in range(10):
     with ti.Tape(loss):
         p2g()
         grid_step()
-        g2p()
-    grad_step()
+    step_color()
 
-    # advect particles
+''' update particle state '''
+def update():
+    clear_grid()
+    with ti.Tape(loss):
+        p2g()
+        grid_step()
+    grad_step()
+    g2p()
     particle_update()
+    
+    # advect particles
+    
 
 @ti.kernel
 def clear_grid():
@@ -124,11 +131,17 @@ def particle_update():
 def grad_step():
     for i in col:
         col[i] -= lr * col.grad[i]
-        '''shows error if I keep this'''
-        #vel[i] -= lr * vel.grad[i]
-        col[i] = max(0, col[i]) # prevent negative colors
+        col[i] = min(max(0, col[i]), 1) # prevent negative colors
+    #for I in ti.grouped(grid_v):
+        #print(grid_v.grad[I])
+    #    grid_v[I] -= 50 * lr * grid_v.grad[I]
 # ====================================================
 
+@ti.kernel
+def step_color():
+    for i in col:
+        col[i] -= lr * col.grad[i]
+        col[i] = min(max(0, col[i]), 1)
 
 ''' helper function to compute distance between two points '''
 
@@ -170,7 +183,7 @@ def grid_step():
         if grid_m[I] > 0:
             grid_v[I] = grid_v[I] / grid_m[I]  # change this grid_v as well
             grid_v[I][1] += gravity * dt
-            grid_c[I] = grid_c[I] / grid_m[I]
+            grid_c[I] = grid_c[I] / (grid_m[I] / particle_mass)
             # boundary condition
             for d in ti.static(range(DIM)):
                 cond = (I[d] < buffer and grid_v[I][d] < 0) \
@@ -191,7 +204,7 @@ def g2p():
         w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
         new_v = ti.Vector.zero(float, DIM)
         #=====================================
-        new_c = ti.Vector.zero(float, 3)
+        #new_c = ti.Vector.zero(float, 3)
         # =====================================
         new_A = ti.Matrix.zero(float, DIM, DIM)
         for dX in ti.static(ti.ndrange(3, 3)):
@@ -199,27 +212,30 @@ def g2p():
             weight = w[dX[0]][0] * w[dX[1]][1]
             new_v += weight * grid_v[base + dX]
             # =====================================
-            new_c += weight * grid_c[base + dX]
+            #new_c += weight * grid_c[base + dX]
             # =====================================
             new_A += 4 * weight * grid_v[base + dX].outer_product(offset_X) * inv_dx
         vel[i] = new_v
         aff[i] = new_A
         J[i] *= 1 + dt * aff[i].trace()
         # =====================================
-        col[i] = new_c
+        #col[i] = new_c
         # =====================================
 
 
 def main():
     gui = ti.GUI('Fluid', 768, background_color=0x112F41)
     gui_g1 = ti.GUI('grid_m', grid_size, background_color=0x000000)
-    # gui_g2 = ti.GUI('grid_v', grid_size, background_color = 0x000000)
+    gui_g2 = ti.GUI('grid_c', grid_size, background_color = 0x000000)
     init()
+    frame = 0
     while True:
         gui.clear(0x112F41)
-        for _ in range(15):
-            update()
-
+        for _ in range(20):
+            if frame < 100:
+                optimize()
+            elif frame < 800:
+                update()
         # =======================================================
         print(loss[None])
         col_np = (col.to_numpy() * 255).astype(int)
@@ -233,12 +249,13 @@ def main():
         grid_m_np = grid_m.to_numpy() / particle_mass / 3
         gui.show()
         gui_g1.set_image(grid_m_np)
-        # gui_g2.set_image(grid_v)
+        gui_g2.set_image(grid_c)
         gui_g1.show()
-        # gui_g2.show()
+        gui_g2.show()
         if gui.get_event(ti.GUI.PRESS):
             if gui.event.key == 's':
                 ti.imwrite(grid_m_np, "grid_m.png")
+        frame += 1
 
 
 if __name__ == '__main__':
