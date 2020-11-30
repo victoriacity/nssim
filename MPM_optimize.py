@@ -14,6 +14,8 @@ grid_size = 192
 
 domain_size = 1
 
+inv_dx = grid_size / domain_size
+
 particle_vol = (0.5 * domain_size / grid_size) ** DIM
 particle_rho = 1
 particle_mass = particle_vol * particle_rho
@@ -21,12 +23,18 @@ particle_mass = particle_vol * particle_rho
 E = 400
 
 # delta t
-lr = 20
+lr = 10
 dt = 0.00008
 
 gravity = -9.8
 
 restitution = 0
+
+
+# velocity limit by CFL condition
+vlim = domain_size / (grid_size * DIM * dt)
+
+print(vlim)
 
 # img = np.transpose(ti.imread("starry.jpg"), (1, 0, 2)).reshape(-1, 3)
 img = np.zeros((grid_size, grid_size, 3)).reshape(-1, 3) + 255
@@ -49,9 +57,6 @@ J = ti.field(dtype=ti.f32, shape=num_particles)
 grid_v = ti.Vector.field(2, dtype=ti.f32, shape=(grid_size, grid_size), needs_grad=True)
 grid_m = ti.field(dtype=ti.f32, shape=(grid_size, grid_size), needs_grad=True)
 
-inv_dx = grid_size / domain_size
-
-
 # =======================================================
 grid_c = ti.Vector.field(3, dtype=ti.f32, shape=(grid_size, grid_size), needs_grad=True)
 
@@ -64,7 +69,7 @@ target = ti.Vector.field(3, dtype=ti.f32, shape=(grid_size, grid_size))
 # loss
 loss = ti.field(dtype=ti.f32, shape=(), needs_grad=True)
 
-img = ti.imread("starry_256.png")
+img = ti.imread("pattern1_256.png")
 # =======================================================
 
 
@@ -105,8 +110,9 @@ def update():
         p2g()
         grid_step()
     grad_step()
-    g2p()
     particle_update()
+    g2p()
+    
     
     # advect particles
     
@@ -130,8 +136,11 @@ def particle_update():
 @ti.kernel
 def grad_step():
     for i in col:
-        col[i] -= lr * col.grad[i]
-        col[i] = min(max(0, col[i]), 1) # prevent negative colors
+        #col[i] -= lr * col.grad[i]
+        #col[i] = min(max(0, col[i]), 1) # prevent negative colors
+        vel[i] -= lr * vel.grad[i]
+        for d in ti.static(range(DIM)):
+            vel[i][d] = min(max(vel[i][d], -vlim), vlim)
     #for I in ti.grouped(grid_v):
         #print(grid_v.grad[I])
     #    grid_v[I] -= 50 * lr * grid_v.grad[I]
@@ -153,7 +162,7 @@ def distance(v1, v2):
     return dis
 
 
-buffer = 3  # buffer grids for boundary conditions
+buffer = 6  # buffer grids for boundary conditions
 
 ''' Lagrangian to Eularian representation '''
 
@@ -161,20 +170,19 @@ buffer = 3  # buffer grids for boundary conditions
 @ti.kernel
 def p2g():
     for i in range(num_particles):
-        base = (pos[i] * inv_dx - 0.5).cast(int)
-        fx = pos[i] * inv_dx - base.cast(float)
+        newpos = pos[i] + vel[i] * dt
+        base = (newpos * inv_dx - 0.5).cast(int)
+        fx = newpos * inv_dx - base.cast(float)
         # quadratic B-spline
         w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
         stress = -dt * particle_vol * (J[i] - 1) * 4 * E * inv_dx * inv_dx
         affine = ti.Matrix.identity(float, DIM) * stress + aff[i] * particle_mass
-        for dX in ti.static(ti.ndrange(3, 3)):
+        for dX in ti.static(ti.ndrange(3, 3)): 
             weight = w[dX[0]][0] * w[dX[1]][1]
             offset_x = (dX - fx) / inv_dx
             grid_v[base + dX] += weight * (particle_mass * vel[i] + affine @ offset_x)
             grid_m[base + dX] += weight * particle_mass
             grid_c[base + dX] += weight * col[i]
-        # regularization of color intensity
-        loss[None] += (col[i] ** 2).sum() / num_particles * 0.05
 
 
 @ti.kernel
@@ -183,17 +191,16 @@ def grid_step():
         if grid_m[I] > 0:
             grid_v[I] = grid_v[I] / grid_m[I]  # change this grid_v as well
             grid_v[I][1] += gravity * dt
-            grid_c[I] = grid_c[I] / (grid_m[I] / particle_mass)
+            grid_c[I] = grid_c[I] * particle_mass / grid_m[I]
             # boundary condition
             for d in ti.static(range(DIM)):
                 cond = (I[d] < buffer and grid_v[I][d] < 0) \
                        or (I[d] > grid_size - buffer and grid_v[I][d] > 0)
                 if cond:
-                    grid_v[I][d] = restitution * grid_v[I][d]
-
-            # ================= compute loss ====================
-            loss[None] += ((target[I] - grid_c[I]) ** 2).sum() / grid_size ** 2
-            # ===================================================
+                    grid_v[I][d] = 0
+        # ================= compute loss ====================
+        loss[None] += ((target[I] - grid_c[I]) ** 2).sum() / (grid_size ** 2)
+        # ===================================================
 
 @ti.kernel
 def g2p():
@@ -234,7 +241,7 @@ def main():
         for _ in range(20):
             if frame < 100:
                 optimize()
-            elif frame < 800:
+            else:
                 update()
         # =======================================================
         print(loss[None])
