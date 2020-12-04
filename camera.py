@@ -90,6 +90,16 @@ class Camera:
         ray_dir = xyz((self.L2W[None] @ direction(ray_dir)))
         return ray_orig, ray_dir
 
+    ''' 
+    Unit Converter
+    '''
+
+    def toPixelUnit(self, x):  # x is in world unit
+        return x * self.res / (self.fx * math.tan(self.fov))
+
+    def toWorldUnit(self, x):  # x is in pixel unit
+        return x * self.fx * math.tan(self.fov) / self.res
+
 class CameraCtl:
     def __init__(self, pos=None, target=None, up=None):
         # python scope camera transformations
