@@ -11,7 +11,7 @@ from camera import *
 
 ''' MPM_optimization is currently 2D '''
 ''' Create some place-holder fields and a camera for now '''
-num_particles = 32768
+num_particles = 512
 # positions of particles
 pos = ti.Vector.field(3, dtype=ti.f32, shape=num_particles)
 # color of particles
@@ -19,10 +19,10 @@ col = ti.Vector.field(3, dtype=ti.f32, shape=num_particles)
 camera = Camera()
 
 ''' directional light '''
-light = ti.normalized(ti.Vector(1, 1, 1))
+light = ti.Vector([1, 1, 1]).normalized()
 
 ''' background color '''
-bkg_color = ti.Vector(0, 0, 0)
+bkg_color = ti.Vector([0, 0, 0])
 
 ''' fields '''
 z_buffer = ti.field(dtype=ti.f32, shape=camera.res)
@@ -37,8 +37,9 @@ pos_view_space = ti.Vector.field(3, dtype=ti.f32, shape=num_particles)
 pos_img_space = ti.Vector.field(2, dtype=ti.f32, shape=num_particles)
 r_projected = ti.field(dtype=ti.f32, shape=num_particles)
 
-@ti.function
-def render(camera, particle_radius, epsilon): # particle_position_field, particle_color_field
+#@ti.function
+@ti.kernel
+def render(particle_radius: ti.f32, epsilon: ti.f32): # particle_position_field, particle_color_field
 
     # clear buffer
     for i in range(camera.res[0]):
@@ -113,10 +114,21 @@ def shade_simple(color, normal):
 ''' Debugging Tools '''
 # initialize fields
 def init():
+    for i in range(num_particles):
+        pos[i] = ti.Vector([0, 0, i])
+        col[i] = ti.Vector([0, 0, 1]) # all blue
     return
 
 if __name__ == '__main__':
 
     init()
-    render(camera, 1.0, 1.0)
+
+    # render frame
+    render(1.0, 1.0)
+
     # display img
+    gui = ti.GUI('Camera View', camera.res[0], background_color=0x000000)
+    image = (camera.img.to_numpy() * 255).astype(int)
+    image = image[:, 0] * 65536 + image[:, 1] * 256 + image[:, 2]
+    gui.set_image(image)
+    gui.show()
