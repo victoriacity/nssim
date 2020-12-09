@@ -11,7 +11,7 @@ from camera import *
 
 ''' MPM_optimization is currently 2D '''
 ''' Create some place-holder fields and a camera for now '''
-num_particles = 512
+num_particles = 1
 # positions of particles
 pos = ti.Vector.field(3, dtype=ti.f32, shape=num_particles)
 # color of particles
@@ -99,7 +99,9 @@ def render(particle_radius: ti.f32, epsilon: ti.f32): # particle_position_field,
             if (frag_w[i, j] > 0):
                 normal = ti.normalized(frag_n[i, j])
                 color = frag_c[i, j] / frag_w[i, j]
-                camera.img[i, j] = shade_simple(color, normal)
+                #camera.img[i, j] = shade_simple(color, normal)
+                camera.img[i, j] = shade_flat(color)
+                print("!")
             else:
                 camera.img[i, j] = bkg_color
 
@@ -111,11 +113,14 @@ def shade_simple(color, normal):
     ambient = color * .2
     return diffuse + ambient
 
+def shade_flat(color):
+    return color
+
 ''' Debugging Tools '''
 # initialize fields
 def init():
     for i in range(num_particles):
-        pos[i] = ti.Vector([0, 0, i])
+        pos[i] = ti.Vector([0, 0, 1])
         col[i] = ti.Vector([0, 0, 1]) # all blue
     return
 
@@ -124,7 +129,7 @@ if __name__ == '__main__':
     init()
 
     # render frame
-    render(10.0, 1.0)
+    render(1.0, 1.0)
 
     # display img
     gui = ti.GUI('Camera View', camera.res[0], background_color=0x000000)
