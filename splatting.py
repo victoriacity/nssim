@@ -66,12 +66,16 @@ def render(particle_radius: ti.f32, epsilon: ti.f32): # particle_position_field,
                 # discard fragment if its distance to particle center > projected radius
                 frag_view_space = camera.cook(ti.Vector([row, column, pos_view_space[i][2]])) # 3d position in view space
                 dis_projected = (frag_view_space - pos_view_space[i]).norm()
-                if (dis_projected > particle_radius): continue
+                print(dis_projected) # always 0, why?
+                if dis_projected > particle_radius:
+                    #print("!")
+                    continue
                 # compute depth value for valid fragment
                 depth = pos_view_space[i][2] - ti.sqrt(particle_radius ** 2 - dis_projected ** 2)
                 z = depth + epsilon # epsilon shifted depth
                 # overwrite if closer
-                if (z < z_buffer[row, column]): z_buffer[row, column] = z
+                if z < z_buffer[row, column]:
+                    z_buffer[row, column] = z
 
     # second pass: attribute blending
     for i in range(num_particles):
@@ -82,7 +86,8 @@ def render(particle_radius: ti.f32, epsilon: ti.f32): # particle_position_field,
                 frag_view_space = camera.cook(ti.Vector([row, column, pos_view_space[i][2]]))  # 3d position in view space
                 dis_projected = (frag_view_space - pos_view_space[i]).norm()
 
-                if (dis_projected > particle_radius): continue
+                if dis_projected > particle_radius:
+                    continue
                 w1 = 1 - dis_projected / r_projected[i]
                 depth = (pos_view_space[i][2] - ti.sqrt(particle_radius ** 2 - dis_projected ** 2))
                 w2 = (z_buffer[row, column] - depth) / epsilon
@@ -96,19 +101,20 @@ def render(particle_radius: ti.f32, epsilon: ti.f32): # particle_position_field,
     # third pass: shading
     for i in range(camera.res[0]):
         for j in range(camera.res[1]):
-            if (frag_w[i, j] > 0):
+            if frag_w[i, j] > 0:
                 normal = ti.normalized(frag_n[i, j])
                 color = frag_c[i, j] / frag_w[i, j]
                 #camera.img[i, j] = shade_simple(color, normal)
                 camera.img[i, j] = shade_flat(color)
-                print("!")
+                #print(color[0], color[1], color[2])
             else:
                 camera.img[i, j] = bkg_color
 
 
 def shade_simple(color, normal):
     fac = normal.dot(-light)
-    if fac < 0: fac = 0
+    if fac < 0:
+        fac = 0
     diffuse = color * fac
     ambient = color * .2
     return diffuse + ambient
@@ -129,12 +135,13 @@ if __name__ == '__main__':
     init()
 
     # render frame
-    render(1.0, 1.0)
+    render(0.5, 1.0)
 
     # display img
     gui = ti.GUI('Camera View', camera.res[0], background_color=0x000000)
     #image = (camera.img.to_numpy() * 255).astype(int)
     #image = image[:, 0] * 65536 + image[:, 1] * 256 + image[:, 2]
-    gui.set_image(camera.img)
+
     while True:
+        gui.set_image(camera.img)
         gui.show()
