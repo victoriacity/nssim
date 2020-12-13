@@ -69,7 +69,7 @@ target = ti.Vector.field(3, dtype=ti.f32, shape=(grid_size, grid_size))
 # loss
 loss = ti.field(dtype=ti.f32, shape=(), needs_grad=True)
 
-img = ti.imread("pattern1_256.png")
+img = ti.imread("starry_256.png")
 # =======================================================
 
 

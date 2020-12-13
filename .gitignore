@@ -4,3 +4,4 @@ __pycache__/
 nssim/__pycache__
 .gitignore
 model.pth
+__pycache__/

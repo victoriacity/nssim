@@ -102,6 +102,24 @@ def update():
         oldPos[i] = pos[i]
         # apply gravity
         vel[i][1] += (gravity * dt)
+
+    #====== apply viscosity ======
+    a = 2500
+    b = 40
+    for i in range(num_particles - 1):
+        for j in range(i + 1, num_particles):
+            q = distance(pos[i], pos[j]) / K_smoothingRadius
+            if q < 1:
+                r_ij = ti.normalized(pos[i] - pos[j])
+                u = ti.dot((vel[i] - vel[j]), r_ij)
+                if u > 0:
+                    I = dt * (1-q) * (a*u + b*u*u) * r_ij
+                    vel[i] -= I/2
+                    vel[j] += I/2
+    #=============================
+
+    #position update
+    for i in range(num_particles):
         # advance to new position
         pos[i] += (vel[i] * dt)
         # clear density
@@ -112,6 +130,8 @@ def update():
     P2G()      
 
 
+
+    # compute density
     for i in range(num_particles):
         for j in range(i, num_particles):
             if i == j:
@@ -218,8 +238,8 @@ def P2G(): # possible argument list (source attribute field, target grid field)
 
 def main():
     gui = ti.GUI('SPH Fluid', 768, background_color = 0x000000)
-    gui_g1 = ti.GUI('grid_m', grid_size, background_color = 0x000000)
-    gui_g2 = ti.GUI('grid_v', grid_size, background_color = 0x000000)
+    #gui_g1 = ti.GUI('grid_m', grid_size, background_color = 0x000000)
+    #gui_g2 = ti.GUI('grid_v', grid_size, background_color = 0x000000)
     init()
     
     while True:
@@ -234,12 +254,12 @@ def main():
         
         # draw particle
         
-        grid_w_np = grid_w.to_numpy()    
+        #grid_w_np = grid_w.to_numpy()
         gui.show()
-        gui_g1.set_image(grid_w_np / np.max(grid_w_np))
-        gui_g2.set_image(grid_v)
-        gui_g1.show()
-        gui_g2.show()
+        #gui_g1.set_image(grid_w_np / np.max(grid_w_np))
+        #gui_g2.set_image(grid_v)
+        #gui_g1.show()
+        #gui_g2.show()
             
         
 if __name__ == '__main__':
