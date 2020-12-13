@@ -148,12 +148,13 @@ class CameraCtl:
     def set(self, pos=None, target=None, up=None):
         pos = ti.Vector(pos or self.pos)
         target = ti.Vector(target or self.target)
+        # left-hand coordinates
+        # +Z axis points FROM the camera TOWARDS the scene
         up = ti.Vector(up or self.up)      # +Y
-        fwd = (target - pos).normalized()  # -Z
+        fwd = (target - pos).normalized()  # +Z
         right = fwd.cross(up).normalized() # +X
         up = right.cross(fwd)              # +Y
         trans = ti.Matrix([right.entries, up.entries, fwd.entries]).transpose()
-
         self.trans = [[trans[i, j] for j in range(3)] for i in range(3)]
         self.pos = pos.entries
         self.target = target.entries
