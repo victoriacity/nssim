@@ -66,7 +66,6 @@ def render(particle_radius: ti.f32, epsilon: ti.f32): # particle_position_field,
                 # discard fragment if its distance to particle center > projected radius
                 frag_view_space = camera.cook(ti.Vector([row, column, pos_view_space[i][2]])) # 3d position in view space
                 dis_projected = (frag_view_space - pos_view_space[i]).norm()
-                print(dis_projected) # always 0, why?
                 if dis_projected > particle_radius:
                     #print("!")
                     continue
