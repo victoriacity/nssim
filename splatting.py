@@ -96,11 +96,18 @@ def render(particle_radius: ti.f32, epsilon: ti.f32): # particle_position_field,
                     continue
                 frag_view_space = ti.Vector([row, column, pos_view_space[i][2]]).cast(float)
                 frag_view_space = camera.cook(frag_view_space)  # 3d position in view space
-                dis_projected = (frag_view_space - pos_view_space[i]).norm()
 
-                if dis_projected > particle_radius:
+                dis_projected = (frag_view_space - pos_view_space[i]).norm() # view space
+
+                #if dis_projected > particle_radius:
+                #    continue
+                #w1 = 1 - dis_projected / particle_radius
+
+                dis_img_space = (ti.Vector([row, column]) - pos_img_space[i]).norm()
+                if dis_img_space > r_projected[i]:
                     continue
-                w1 = 1 - dis_projected / r_projected[i]
+                w1 = 1 - dis_img_space / r_projected[i]
+
                 depth = (pos_view_space[i][2] - ti.sqrt(particle_radius ** 2 - dis_projected ** 2))
                 w2 = (z_buffer[row, column] - depth) / epsilon
                 if w2 > 0:
@@ -138,7 +145,7 @@ def shade_flat(color):
 # initialize fields
 def init():
     for i in range(num_particles):
-        pos[i] = ti.Vector([0.0, 0.0, (i - 1.5) / 4])
+        pos[i] = ti.Vector([0.0, 0.0, (i - 1.5) / 5])
         col[i] = ti.Vector([0.0, 1 - i / 3, i / 3]) # all blue
     #print(pos.to_numpy())
     return
@@ -153,6 +160,9 @@ if __name__ == '__main__':
     #image = (camera.img.to_numpy() * 255).astype(int)
     #image = image[:, 0] * 65536 + image[:, 1] * 256 + image[:, 2]
 
+    radius = 0.2
+    epsilon = 0.1
+
     while gui.running:
         gui.get_event()
         gui.running = not gui.is_pressed(ti.GUI.ESCAPE)
@@ -162,6 +172,12 @@ if __name__ == '__main__':
         #print(camera.ctl.trans)
         #print(pos_view_space.to_numpy())
         #print(camera.ctl.pos, camera.ctl.target, pos_view_space.to_numpy())
-        render(0.2, 0.1)
+        if gui.is_pressed(ti.GUI.UP):
+            epsilon += 0.001
+            print(epsilon)
+        elif gui.is_pressed(ti.GUI.DOWN):
+            epsilon -= 0.001
+            print(epsilon)
+        render(radius, epsilon)
         gui.set_image(camera.img)
         gui.show()
