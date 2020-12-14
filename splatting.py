@@ -98,12 +98,8 @@ def render(particle_radius: ti.f32, epsilon: ti.f32): # particle_position_field,
                 frag_view_space = camera.cook(frag_view_space)  # 3d position in view space
 
                 dis_projected = (frag_view_space - pos_view_space[i]).norm() # view space
-
-                #if dis_projected > particle_radius:
-                #    continue
-                #w1 = 1 - dis_projected / particle_radius
-
                 dis_img_space = (ti.Vector([row, column]) - pos_img_space[i]).norm()
+
                 if dis_img_space > r_projected[i]:
                     continue
                 w1 = 1 - dis_img_space / r_projected[i]
