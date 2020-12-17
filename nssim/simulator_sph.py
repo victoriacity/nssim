@@ -11,13 +11,15 @@ particle field towards a target image.
 @ti.data_oriented
 class SPH_Simulator:
 
+    buffer = 0.02
+
     '''
     Initializes the simulator which runs on 
     device DEVICE.
     Note: OpenGL and CUDA are different Taichi devices.
     '''
-    def __init__(self, device, num_particles=2500,
-            dt = 0.001):
+    def __init__(self, device, num_particles=32768, grid_size=192,
+            dt = 0.0001):
         device = device.lower()
         if device == "cuda":
             self.device = ti.cuda
@@ -29,19 +31,20 @@ class SPH_Simulator:
 
         # simulation parameters
         self.num_particles = num_particles
-        self.K_smoothingRadius = 2
-        self.K_stiff = 1000  # stiffness
-        self.K_stiffN = 2000  # stiffness near
-        self.K_restDensity = 4 # rest density
+        self.K_smoothingRadius = 0.02
+        self.K_stiff = 100  # stiffness
+        self.K_stiffN = 200  # stiffness near
+        self.K_restDensity = 6.5 # rest density
         self.restitution = -0.5
-        self.domain_size = 100
-        self.grid_size = self.domain_size // self.K_smoothingRadius
+        self.domain_size = 1
+        self.grid_size = grid_size#self.domain_size // self.K_smoothingRadius
         self.dt = dt
-        self.lr = 3
-        self.gravity = -50
+        self.lr = 10
+        self.gravity = -9.8
 
         # other quantities
         self.inv_dx = self.grid_size / self.domain_size
+        self.particle_mass = 1
         # density of particles
         self.dens = ti.field(dtype=ti.f32, shape=num_particles)  # density
         self.densN = ti.field(dtype=ti.f32, shape=num_particles)  # near density
@@ -88,16 +91,16 @@ class SPH_Simulator:
     Updates the simulation by one frame. One frame
     may include multiple substeps.
     '''
-    def step(self, substep=20):
+    def step(self, substep=5):
         for _ in range(substep):
             self.clear_state()
             self.predict_velocity()  # initial prediction of velocity
             with ti.Tape(self.loss):
-                self.particle_update() # update with predicted velocity
+                #self.particle_update() # update with predicted velocity
                 self.p2g() # convert to grid representation
                 self.grid_step()
             self.grad_step(False) # apply gradient descend to color and velocity
-            self.restore_position() # undo the original position update
+            #self.restore_position() # undo the original position update
             self.particle_update() # update position with the new velocity
         self.frame += 1
 
@@ -108,9 +111,7 @@ class SPH_Simulator:
     def optimize(self, substep=20):
         for _ in range(substep):
             self.clear_state()
-            self.predict_velocity()  # initial prediction of velocity
             with ti.Tape(self.loss):
-                self.particle_update()  # update with predicted velocity
                 self.p2g()  # convert to grid representation
                 self.grid_step()
             self.grad_step(True)
@@ -199,17 +200,17 @@ class SPH_Simulator:
                 if i == j:
                     self.dens[i] += 1
                     self.densN[i] += 1
-                    continue
-                dis = (self.pos[i] - self.pos[j]).norm()
-                if 0 < dis < self.K_smoothingRadius:
-                    q = 1 - dis / self.K_smoothingRadius
-                    q2 = q * q
-                    q3 = q2 * q
-                    # print(dist[i], q)
-                    self.dens[i] += q2
-                    self.dens[j] += q2
-                    self.densN[i] += q3
-                    self.densN[j] += q3
+                else:
+                    dis = (self.pos[i] - self.pos[j]).norm()
+                    if 0 < dis < self.K_smoothingRadius:
+                        q = 1 - dis / self.K_smoothingRadius
+                        q2 = q * q
+                        q3 = q2 * q
+                        # print(dist[i], q)
+                        self.dens[i] += q2
+                        self.dens[j] += q2
+                        self.densN[i] += q3
+                        self.densN[j] += q3
 
         # update pressure
         for i in range(self.num_particles):
@@ -219,22 +220,21 @@ class SPH_Simulator:
         # apply pressure
         for i in range(self.num_particles):
             for j in range(i, self.num_particles):
-                if i == j:
-                    continue
-                dis = (self.pos[i] - self.pos[j]).norm()
-                if 0 < dis < self.K_smoothingRadius:
-                    # index of particle i & j
-                    p = self.press[i] + self.press[j]
-                    pN = self.pressN[i] + self.pressN[j]
+                if i != j:
+                    dis = (self.pos[i] - self.pos[j]).norm()
+                    if 0 < dis < self.K_smoothingRadius:
+                        # index of particle i & j
+                        p = self.press[i] + self.press[j]
+                        pN = self.pressN[i] + self.pressN[j]
 
-                    q = 1 - dis / self.K_smoothingRadius
-                    q2 = q * q
+                        q = 1 - dis / self.K_smoothingRadius
+                        q2 = q * q
 
-                    displace = (p * q + pN * q2) * (self.dt ** 2)
-                    a2bN = (self.pos[i] - self.pos[j]) / dis
+                        displace = (p * q + pN * q2) * (self.dt ** 2)
+                        a2bN = (self.pos[i] - self.pos[j]) / dis
 
-                    self.pos[i] += displace * a2bN
-                    self.pos[j] -= displace * a2bN
+                        self.pos[i] += displace * a2bN
+                        self.pos[j] -= displace * a2bN
 
     @ti.kernel
     def restore_position(self):
@@ -247,19 +247,19 @@ class SPH_Simulator:
     def boundary_collision(self, index):
 
         # x boundary
-        if self.pos[index][0] < 0:
-            self.pos[index][0] = 0
+        if self.pos[index][0] < self.buffer:
+            self.pos[index][0] = self.buffer
             self.vel[index][0] *= self.restitution
-        elif self.pos[index][0] > self.domain_size:
-            self.pos[index][0] = self.domain_size
+        elif self.pos[index][0] > self.domain_size - self.buffer:
+            self.pos[index][0] = self.domain_size - self.buffer
             self.vel[index][0] *= self.restitution
 
         # y boundary
-        if self.pos[index][1] < 0:
-            self.pos[index][1] = 0
+        if self.pos[index][1] < self.buffer:
+            self.pos[index][1] = self.buffer
             self.vel[index][1] *= self.restitution
-        elif self.pos[index][1] > self.domain_size:
-            self.pos[index][1] = self.domain_size
+        elif self.pos[index][1] > self.domain_size - self.buffer:
+            self.pos[index][1] = self.domain_size - self.buffer
             self.vel[index][1] *= self.restitution
 
     ''' update particle position '''
@@ -301,7 +301,9 @@ class SPH_Simulator:
     @ti.kernel
     def grid_step(self): # compute loss
         for I in ti.grouped(self.grid_m):
-            self.loss[None] += ((self.target[I] - self.grid_c[I]) ** 2).sum() / (self.grid_size ** 2)
+            if self.grid_m[I] > 0:
+                self.grid_c[I] = self.grid_c[I] / self.grid_m[I]
+                self.loss[None] += ((self.target[I] - self.grid_c[I]) ** 2).sum() / (self.grid_size ** 2)
 
 
 # main function for debugging
