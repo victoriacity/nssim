@@ -38,7 +38,7 @@ inv_dx = grid_size / domain_size
 Rendering parameters
 '''
 col = ti.Vector.field(3, dtype=ti.f32, shape=num_particles)
-camera = Camera()
+camera = Camera(pos=[0.5, 0.5, 2], target=[0.5, 0.5, 0.5])
 
 ''' directional light '''
 light = ti.Vector([-1, -1, -4]).normalized()
@@ -71,7 +71,7 @@ def init():
         pos[i] = dam_length * pos[i] / n_axis + 0.1 # put fluid block to the corner
         pos[i] *= domain_size # scale to fit the domain    
         J[i] = 1
-        col[i] = ti.Vector([0.3, 0.6, 1])
+        col[i] = ti.Vector([0.2, 0.45, 1])
 
 
 ''' update particle state '''
@@ -163,12 +163,20 @@ def render(particle_radius: ti.f32, epsilon: ti.f32): # particle_position_field,
         ref_view_space = ti.Vector([pos_view_space[i][0] + particle_radius, pos_view_space[i][1], pos_view_space[i][2]])
         ref_img_space = camera.uncook(ref_view_space)
         r_projected[i] = abs(ref_img_space[0] - pos_img_space[i][0]) + padding # projected radius in pixel unit
+        
+        # fragment ranges to render
+        xmin = int(min(max(0, pos_img_space[i][0] - r_projected[i]), camera.res[0]))
+        xmax = int(min(max(0, pos_img_space[i][0] + r_projected[i]), camera.res[0]))
+        ymin = int(min(max(0, pos_img_space[i][1] - r_projected[i]), camera.res[1]))
+        ymax = int(min(max(0, pos_img_space[i][1] + r_projected[i]), camera.res[1]))
+        if xmin > xmax or ymin > ymax:
+            continue
 
         # process projected fragments and compute depth
-        for row in range(int(pos_img_space[i][0] - r_projected[i]), int(pos_img_space[i][0] + r_projected[i])):
-            for column in range(int(pos_img_space[i][1] - r_projected[i]), int(pos_img_space[i][1] + r_projected[i])):
-                if row < 0 or row >= camera.res[0] or column < 0 or column >= camera.res[1]:
-                    continue
+        for row in range(xmin, xmax):
+            for column in range(ymin, ymax):
+                #if row < 0 or row >= camera.res[0] or column < 0 or column >= camera.res[1]:
+                #    continue
                 # discard fragment if its distance to particle center > projected radius
                 frag_view_space = ti.Vector([row, column, pos_view_space[i][2]]).cast(float)
                 frag_view_space = camera.cook(frag_view_space) # 3d position in view space
@@ -185,11 +193,19 @@ def render(particle_radius: ti.f32, epsilon: ti.f32): # particle_position_field,
     
     # second pass: attribute blending
     for i in range(num_particles):
+        # fragment ranges to render
+        xmin = int(min(max(0, pos_img_space[i][0] - r_projected[i]), camera.res[0]))
+        xmax = int(min(max(0, pos_img_space[i][0] + r_projected[i]), camera.res[0]))
+        ymin = int(min(max(0, pos_img_space[i][1] - r_projected[i]), camera.res[1]))
+        ymax = int(min(max(0, pos_img_space[i][1] + r_projected[i]), camera.res[1]))
+        if xmin > xmax or ymin > ymax:
+            continue
+
         # compute weights for each fragment
-        for row in range(int(pos_img_space[i][0] - r_projected[i]), int(pos_img_space[i][0] + r_projected[i])):
-            for column in range(int(pos_img_space[i][1] - r_projected[i]), int(pos_img_space[i][1] + r_projected[i])):
-                if row < 0 or row >= camera.res[0] or column < 0 or column >= camera.res[1]:
-                    continue
+        for row in range(xmin, xmax):
+            for column in range(ymin, ymax):
+                #if row < 0 or row >= camera.res[0] or column < 0 or column >= camera.res[1]:
+                 #   continue
                 frag_view_space = ti.Vector([row, column, pos_view_space[i][2]]).cast(float)
                 frag_view_space = camera.cook(frag_view_space)  # 3d position in view space
 
@@ -201,12 +217,14 @@ def render(particle_radius: ti.f32, epsilon: ti.f32): # particle_position_field,
                 w1 = 1 - dis_img_space / (r_projected[i] - padding)
 
                 depth = (pos_view_space[i][2] - ti.sqrt(particle_radius ** 2 - dis_projected ** 2))
+                # updates the depth of the fragment
+                frag_view_space = ti.Vector([frag_view_space[0], frag_view_space[1], depth])
                 w2 = (z_buffer[row, column] - depth) / epsilon
                 if w2 > 0:
                     weight = w1 * w2
                     frag_w[row, column] += weight # sum weights
                     frag_c[row, column] += weight * col[i] # blend color
-                    normal = ti.Vector([frag_view_space[0], frag_view_space[1], depth]) - pos_view_space[i]
+                    normal = (frag_view_space - pos_view_space[i]).normalized()
                     normal_world = xyz(camera.L2W @ direction(normal))
                     # transform normal to world space
                     frag_n[row, column] += weight * normal_world # blend normal
@@ -223,7 +241,7 @@ def render(particle_radius: ti.f32, epsilon: ti.f32): # particle_position_field,
             # reflection
             refldir = viewdir - 2 * viewdir.dot(normal) * normal
             if refldir[1] > 0:
-                camera.img[I] += min(0.1, refldir[1] * 5) * ti.Vector([0.8, 0.9, 0.95])
+                camera.img[I] += min(0.02, refldir[1] * 5) * ti.Vector([0.8, 0.9, 0.95])
         else:
             # use simple raycast to render background
             if viewdir[1] > 0:
@@ -231,9 +249,11 @@ def render(particle_radius: ti.f32, epsilon: ti.f32): # particle_position_field,
             else:
                 floor_color = ti.Vector([1.0, 1.0, 1.0])
                 # shade floor
-                camera.img[I] = shade_cooktorrance(
+                camera.img[I] = shade_simple(
                     floor_color, ti.Vector([0.0, 1.0, 0.0]), 
                     -light, -viewdir)
+        # gamma correction
+        camera.img[I] = camera.img[I] ** (1/2.2)
 
 
 @ti.func
@@ -249,51 +269,24 @@ def shade_flat(color):
 
 
 EPS = 1e-4
-roughness = 1.0
+roughness = 0.5
 metallic = 0.0
-specular = 1.0
-ks = 3.0
-kd = 2.0
-
-
-
-@ti.func
-def ischlick(cost):
-    k = (roughness + 1) ** 2 / 8
-    return k + (1 - k) * cost
-
-@ti.func
-def fresnel(f0, HoV):
-    return f0 + (1 - f0) * (1 - HoV)**5
-
-@ti.func
-def brdf_cooktorrance2(color, normal, lightdir, viewdir):
-    ks = 1.0
-    kd = 1.0
-    halfway = (lightdir + viewdir).normalized()
-    NoH = max(EPS, ti.dot(normal, halfway))
-    NoL = max(EPS, ti.dot(normal, lightdir))
-    NoV = max(EPS, ti.dot(normal, viewdir))
-    HoV = min(1 - EPS, max(EPS, ti.dot(halfway, viewdir)))
-    ndf = roughness**2 / (NoH**2 * (roughness**2 - 1) + 1)**2
-    vdf = 0.25 / (ischlick(NoL) * ischlick(NoV))
-    f0 = metallic * color + (1 - metallic) * 0.16 * specular**2
-    fdf = fresnel(f0, NoV)
-    strength = (1 - f0) * (1 - metallic) * kd * color \
-        + f0 * ks * fdf * vdf * ndf / math.pi
-    return strength
-
+specular = 0.04
+ambient = 0.05
 
 @ti.func
 def brdf_cooktorrance(color, normal, lightdir, viewdir):
     halfway = (viewdir + lightdir).normalized()
     ndotv = max(ti.dot(viewdir, normal), EPS)
     ndotl = max(ti.dot(lightdir, normal), EPS)
+    ndf = microfacet(normal, halfway)
+    geom = geometry(ndotv, ndotl)
+    f = frensel(viewdir, halfway, color)
+    ks = f
+    kd = 1 - ks
+    kd *= 1 - metallic
     diffuse = kd * color / math.pi
-    specular = microfacet(normal, halfway)\
-                * frensel(viewdir, halfway, color)\
-                * geometry(ndotv, ndotl)
-    specular /= 4 * ndotv * ndotl
+    specular = ndf * geom * f / (4 * ndotv * ndotl)
     return diffuse + specular
 
 '''
@@ -312,9 +305,9 @@ Fresnel-Schlick approximation
 @ti.func
 def frensel(view, halfway, color):
     specular_vec = ti.Vector([specular] * 3)
-    f0 = specular_vec * metallic + color * (1 - metallic)
+    f0 = specular_vec * (1 - metallic) + color * metallic
     hdotv = min(1, max(ti.dot(halfway, view), 0))
-    return (f0 + (1.0 - f0) * (1.0 - hdotv) ** 5) * ks
+    return f0 + (1.0 - f0) * (1.0 - hdotv) ** 5
 
 '''
 Smith's method with Schlick-GGX
@@ -326,20 +319,23 @@ def geometry(ndotv, ndotl):
         / (ndotv * (1.0 - k) + k) / (ndotl * (1.0 - k) + k)
     return max(0, geom)
 
-
+@ti.func
 def shade_cooktorrance(color, normal, lightdir, viewdir):
     costheta = max(0, ti.dot(normal, lightdir))
-    l_out = ti.Vector([0.0, 0.0, 0.0])
+    radiance = 2
+    l_out = ambient * color
     if costheta > 0:
-        l_out = brdf_cooktorrance(color, normal, lightdir, viewdir)\
-                * costheta
+        l_out += brdf_cooktorrance(color, normal, lightdir, viewdir)\
+                * costheta * radiance
     return l_out
 
 
 
 def main():
     gui = ti.GUI('Camera View', camera.res[0], background_color=0x000000)
-    
+    paused = False
+    # keyboard response may take a few frames, a flag is used to avoid repetitive events
+    in_event = False
     #gui_g2 = ti.GUI('grid_v', grid_size, background_color = 0x000000)
     init()
     radius = 0.025
@@ -347,16 +343,28 @@ def main():
     while gui.running:
         gui.get_event()
         gui.running = not gui.is_pressed(ti.GUI.ESCAPE)
-        for _ in range(10):
-            update()
+        if not paused:
+            for _ in range(10):
+                update()
         # render frame
         camera.from_mouse(gui)
+
         if gui.is_pressed(ti.GUI.UP):
-            epsilon += 0.001
-            print(epsilon)
+            if not in_event:
+                in_event = True
+                epsilon += 0.001
+                print(epsilon)
         elif gui.is_pressed(ti.GUI.DOWN):
-            epsilon -= 0.001
-            print(epsilon)
+            if not in_event:
+                in_event = True
+                epsilon -= 0.001
+                print(epsilon)
+        elif gui.is_pressed(ti.GUI.SPACE):
+            if not in_event:
+                in_event = True
+                paused = not paused
+        else:
+            in_event = False
         render(radius, epsilon)
         gui.set_image(camera.img)
         gui.show()
