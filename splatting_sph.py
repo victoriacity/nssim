@@ -18,11 +18,11 @@ dt = 0.0001
 gravity = -50
 
 # interaction radius
-K_smoothingRadius = 0.2
+K_smoothingRadius = 0.02
 
 # stiffness
-K_stiff = 100 # stiffness
-K_stiffN = 200 # stiffness near
+K_stiff = 10 # stiffness
+K_stiffN = 20 # stiffness near
 
 # rest density
 K_restDensity = 21952
@@ -92,11 +92,14 @@ def init():
         pos[i][0] = i % n_axis
         pos[i] = dam_length * pos[i] / n_axis + 0.1 # put fluid block to the corner
         pos[i] *= domain_size # scale to fit the domain
+        oldPos[i] = pos[i]
         col[i] = ti.Vector([0.2, 0.45, 1])
+    print("dam grid spacing:", 0.5 / (num_particles) ** (1 / 3) * domain_size)
     print("init density:", num_particles / (0.5 * domain_size) ** 3)
 
 
 ''' update particle state '''
+
 @ti.kernel
 def update():
 
@@ -106,21 +109,18 @@ def update():
         dens[i] = 0
         densN[i] = 0
         num_pair[i] = 0
-
         # compute new velocity
         vel[i] = (pos[i] - oldPos[i])/dt
-
-        # collision handling?
+        # collision handling
         boundary_collision(i)
-
         # save previous position
         oldPos[i] = pos[i]
         # apply gravity
         vel[i][1] += (gravity * dt)
 
     # apply viscosity
-    a = 2000
-    b = 40
+    a = 0
+    b = 0
 
     for i in range(num_particles - 1):
         for j in range(i + 1, num_particles):
@@ -133,7 +133,6 @@ def update():
                     I = dt * (1-q) * (a*u + b*u*u) * r_ij
                     vel[i] -= I/2
                     vel[j] += I/2
-
 
     # position update
     for i in range(num_particles):
@@ -148,7 +147,6 @@ def update():
                 pair[i, num_pair[i]] = j
                 dist[i, num_pair[i]] = distance
                 num_pair[i] += 1
-
 
     # compute density
     for i in range(num_particles):
@@ -166,12 +164,10 @@ def update():
             densN[i] += q3
             densN[pair[i, j]] += q3
 
-
     # update pressure
     for i in range(num_particles):
         press[i] = K_stiff * (dens[i] - K_restDensity)
         pressN[i] = K_stiffN * densN[i]
-
 
     # apply pressure
     for i in range(num_particles - 1):
