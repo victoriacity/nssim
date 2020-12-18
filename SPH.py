@@ -56,8 +56,9 @@ pressN = ti.field(dtype = ti.f32, shape=num_particles) # near density
 
 # pairs
 max_pairs = (1 + num_particles) * num_particles // 2 # should be int
-#pair = ti.Vector.field(2, dtype=ti.i32, shape=(max_pairs,))
-#dist = ti.field(dtype=ti.f32, shape=(max_pairs,)) # store distance for each pair
+pair = ti.Vector.field(2, dtype=ti.i32, shape=(max_pairs,))
+dist = ti.field(dtype=ti.f32, shape=(max_pairs,)) # store distance for each pair
+num_pair = ti.field(dtype=ti.i32, shape=()) # number of pairs
 
 # Eularian grid
 grid_size = domain_size // K_smoothingRadius # The grid has size (grid_size, grid_size)
@@ -89,9 +90,15 @@ def init():
 ''' update particle state '''
 @ti.kernel
 def update():
-    
+
+    num_pair[None] = 0
+
     # state update
     for i in range(num_particles):
+        # clear density
+        dens[i] = 0
+        densN[i] = 0
+
         # compute new velocity
         vel[i] = (pos[i] - oldPos[i])/dt
         
@@ -104,12 +111,20 @@ def update():
         vel[i][1] += (gravity * dt)
 
     #====== apply viscosity ======
-    a = 2500
+    a = 2000
     b = 40
     for i in range(num_particles - 1):
         for j in range(i + 1, num_particles):
-            q = distance(pos[i], pos[j]) / K_smoothingRadius
+            distance = (pos[i] - pos[j]).norm()
+            q = distance / K_smoothingRadius
             if q < 1:
+
+                # store pair
+                pair[num_pair[None]][0] = i
+                pair[num_pair[None]][1] = j
+                dist[num_pair[None]] = distance
+                num_pair[None] += 1
+
                 r_ij = ti.normalized(pos[i] - pos[j])
                 u = ti.dot((vel[i] - vel[j]), r_ij)
                 if u > 0:
@@ -122,32 +137,29 @@ def update():
     for i in range(num_particles):
         # advance to new position
         pos[i] += (vel[i] * dt)
-        # clear density
-        dens[i] = 0
-        densN[i] = 0
+
       
     # Lagrangian to Eularian
-    P2G()      
+    #P2G()
 
 
 
     # compute density
     for i in range(num_particles):
-        for j in range(i, num_particles):
-            if i == j:
-                dens[i] += 1
-                densN[i] += 1
-                continue
-            dis = distance(pos[i], pos[j])
-            if 0 < dis < K_smoothingRadius:
-                q = 1 - dis / K_smoothingRadius
-                q2 = q * q
-                q3 = q2 * q
-                #print(dist[i], q)
-                dens[i] += q2
-                dens[j] += q2
-                densN[i] += q3
-                densN[j] += q3
+        dens[i] = 1
+        densN[i] = 1
+
+    for i in range(pair):
+        q = 1 - dist[i] / K_smoothingRadius
+        q2 = q * q
+        q3 = q2 * q
+        # print(dist[i], q)
+        dens[pair[i][0]] += q2
+        dens[pair[i][1]] += q2
+        densN[pair[i][0]] += q3
+        densN[pair[i][1]] += q3
+
+
         
     # update pressure
     for i in range(num_particles):
@@ -156,24 +168,18 @@ def update():
         
     
     # apply pressure
-    for i in range(num_particles):
-        for j in range(i, num_particles):
-            if i == j:
-                continue
-            dis = distance(pos[i], pos[j])
-            if 0 < dis < K_smoothingRadius:
-                # index of particle i & j
-                p = press[i] + press[j]
-                pN = pressN[i] + pressN[j]
-        
-                q = 1 - dis / K_smoothingRadius
-                q2 = q * q
-                
-                displace = (p * q + pN * q2) * (dt * dt)
-                a2bN = (pos[i] - pos[j]) / dis
-                
-                pos[i] += displace * a2bN
-                pos[j] -= displace * a2bN
+    for i in range(pair):
+        p = press[pair[i][0]] + press[pair[i][1]]
+        pN = pressN[pair[i][0]] + pressN[pair[i][1]]
+
+        q = 1 - dist[i] / K_smoothingRadius
+        q2 = q * q
+
+        displace = (p * q + pN * q2) * (dt * dt)
+        a2bN = (pos[pair[i][0]] - pos[pair[i][1]]) / dist[i]
+
+        pos[pair[i][0]] += displace * a2bN
+        pos[pair[i][1]] -= displace * a2bN
         
     # boundary collision
     #for i in range(num_particles):
@@ -237,7 +243,7 @@ def P2G(): # possible argument list (source attribute field, target grid field)
     
 
 def main():
-    gui = ti.GUI('SPH Fluid', 768, background_color = 0x000000)
+    gui = ti.GUI('SPH Fluid', 512, background_color = 0x000000)
     #gui_g1 = ti.GUI('grid_m', grid_size, background_color = 0x000000)
     #gui_g2 = ti.GUI('grid_v', grid_size, background_color = 0x000000)
     init()
