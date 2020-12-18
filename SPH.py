@@ -19,11 +19,11 @@ gravity = -50
 K_smoothingRadius = 0.02
 
 # stiffness
-K_stiff = 1000 # stiffness
-K_stiffN = 2000 # stiffness near
+K_stiff = 100 # stiffness
+K_stiffN = 200 # stiffness near
 
 # rest density
-K_restDensity = 4
+K_restDensity = 8
 
 restitution = -0.5
 
@@ -116,6 +116,7 @@ def update():
     #====== apply viscosity ======
     a = 2000
     b = 40
+
     for i in range(num_particles - 1):
         for j in range(i + 1, num_particles):
             distance = (pos[i] - pos[j]).norm()
@@ -135,7 +136,7 @@ def update():
                     vel[i] -= I/2
                     vel[j] += I/2
     #=============================
-
+ 
     #position update
     for i in range(num_particles):
         # advance to new position
@@ -146,21 +147,22 @@ def update():
     #P2G()
 
 
-
+    
     # compute density
     for i in range(num_particles):
         dens[i] = 1
         densN[i] = 1
 
-    for i in range(pair):
-        q = 1 - dist[i] / K_smoothingRadius
-        q2 = q * q
-        q3 = q2 * q
-        # print(dist[i], q)
-        dens[pair[i][0]] += q2
-        dens[pair[i][1]] += q2
-        densN[pair[i][0]] += q3
-        densN[pair[i][1]] += q3
+    for i in pair:
+        if i <= num_pair[None]:
+            q = 1 - dist[i] / K_smoothingRadius
+            q2 = q * q
+            q3 = q2 * q
+            # print(dist[i], q)
+            dens[pair[i][0]] += q2
+            dens[pair[i][1]] += q2
+            densN[pair[i][0]] += q3
+            densN[pair[i][1]] += q3
 
 
         
@@ -171,18 +173,19 @@ def update():
         
     
     # apply pressure
-    for i in range(pair):
-        p = press[pair[i][0]] + press[pair[i][1]]
-        pN = pressN[pair[i][0]] + pressN[pair[i][1]]
+    for i in pair:
+        if i <= num_pair[None]:
+            p = press[pair[i][0]] + press[pair[i][1]]
+            pN = pressN[pair[i][0]] + pressN[pair[i][1]]
 
-        q = 1 - dist[i] / K_smoothingRadius
-        q2 = q * q
+            q = 1 - dist[i] / K_smoothingRadius
+            q2 = q * q
 
-        displace = (p * q + pN * q2) * (dt * dt)
-        a2bN = (pos[pair[i][0]] - pos[pair[i][1]]) / dist[i]
+            displace = (p * q + pN * q2) * (dt * dt)
+            a2bN = (pos[pair[i][0]] - pos[pair[i][1]]) / dist[i]
 
-        pos[pair[i][0]] += displace * a2bN
-        pos[pair[i][1]] -= displace * a2bN
+            pos[pair[i][0]] += displace * a2bN
+            pos[pair[i][1]] -= displace * a2bN
         
     # boundary collision
     #for i in range(num_particles):
