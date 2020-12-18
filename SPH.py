@@ -11,12 +11,12 @@ ti.init(arch = ti.cuda)
 num_particles = 2500
 
 #delta t
-dt = 0.001
+dt = 0.0001
 
 gravity = -50
 
 # interaction radius
-K_smoothingRadius = 2
+K_smoothingRadius = 0.02
 
 # stiffness
 K_stiff = 1000 # stiffness
@@ -29,12 +29,9 @@ restitution = -0.5
 
 # domain scale (0, 0) - (domain_size, domain_size)
 # used to convert positions into canvas coordinates
-domain_size = 100
+domain_size = 1
 
-#img = np.transpose(ti.imread("starry.jpg"), (1, 0, 2)).reshape(-1, 3)
-img = np.zeros((50, 50, 3)).reshape(-1, 3) + 255
-# rgb 2 hex
-img = img[:, 0] * 65536 + img[:, 1] * 256 + img[:, 2]
+
 
 ''' Fields '''
 # positions of particles
@@ -60,10 +57,16 @@ max_pairs = (1 + num_particles) * num_particles // 2 # should be int
 #dist = ti.field(dtype=ti.f32, shape=(max_pairs,)) # store distance for each pair
 
 # Eularian grid
-grid_size = domain_size // K_smoothingRadius # The grid has size (grid_size, grid_size)
+grid_size = int(domain_size / K_smoothingRadius) # The grid has size (grid_size, grid_size)
 print("grid size:", grid_size)
 grid_v = ti.Vector.field(2, dtype = ti.f32, shape = (grid_size, grid_size)) # grid to store P2G attributes
 grid_w = ti.field(dtype = ti.f32, shape = (grid_size, grid_size)) # grid to store the sum of weights
+#img = np.transpose(ti.imread("starry.jpg"), (1, 0, 2)).reshape(-1, 3)
+#img = np.zeros((grid_size, grid_size, 3)).reshape(-1, 3) + 255
+img = np.ones((num_particles, 3)) * 255
+# rgb 2 hex
+img = img[:, 0] * 65536 + img[:, 1] * 256 + img[:, 2]
+print(img.shape)
 
 ''' initialize particle position & velocity '''
 @ti.kernel
