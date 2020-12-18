@@ -34,6 +34,8 @@ class SPH_Simulator:
         self.K_smoothingRadius = 0.02
         self.K_stiff = 100  # stiffness
         self.K_stiffN = 200  # stiffness near
+        self.viscosity_a = 2000
+        self.viscosity_b = 40
         self.K_restDensity = 6.5 # rest density
         self.restitution = -0.5
         self.domain_size = 1
@@ -51,6 +53,11 @@ class SPH_Simulator:
         # pressure of particles
         self.press = ti.field(dtype=ti.f32, shape=num_particles)  # density
         self.pressN = ti.field(dtype=ti.f32, shape=num_particles)  # near density
+        # pairs
+        max_pairs = 128  # max neighbor of one particle
+        self.pair = ti.field(dtype=ti.i32, shape=(num_particles - 1, max_pairs))
+        self.dist = ti.field(dtype=ti.f32, shape=(num_particles - 1, max_pairs))  # store distance for each pair
+        self.num_pair = ti.field(dtype=ti.i32, shape=(num_particles - 1,))  # number of pairs
 
         self.vlim = self.domain_size / (self.grid_size * DIM * self.dt)
         self.frame = 0
@@ -155,6 +162,7 @@ class SPH_Simulator:
         for i in range(self.num_particles):
             self.dens[i] = 0
             self.densN[i] = 0
+            self.num_pair[i] = 0
 
     @ti.kernel
     def predict_velocity(self):
@@ -170,8 +178,6 @@ class SPH_Simulator:
             self.vel[i][1] += (self.gravity * self.dt)
 
         # apply viscosity
-        a = 2000
-        b = 40
         for i in range(self.num_particles - 1):
             for j in range(i + 1, self.num_particles):
                 q = (self.pos[i] - self.pos[j]).norm() / self.K_smoothingRadius
@@ -179,7 +185,7 @@ class SPH_Simulator:
                     r_ij = ti.normalized(self.pos[i] - self.pos[j])
                     u = ti.dot((self.vel[i] - self.vel[j]), r_ij)
                     if u > 0:
-                        I = self.dt * (1 - q) * (a * u + b * u * u) * r_ij
+                        I = self.dt * (1 - q) * (self.viscosity_a * u + self.viscosity_b * u * u) * r_ij
                         self.vel[i] -= I / 2
                         self.vel[j] += I / 2
 
@@ -191,26 +197,30 @@ class SPH_Simulator:
             # advance to new position
             self.pos[i] += (self.vel[i] * self.dt)
 
-        # Lagrangian to Eularian
-        # P2G()
+        # compute pair info
+        for i in range(self.num_particles - 1):
+            for j in range(i + 1, self.num_particles):
+                distance = (self.pos[i] - self.pos[j]).norm()
+                if distance < self.K_smoothingRadius:
+                    self.pair[i, self.num_pair[i]] = j
+                    self.dist[i, self.num_pair[i]] = distance
+                    self.num_pair[i] += 1
 
         # compute density
         for i in range(self.num_particles):
-            for j in range(i, self.num_particles):
-                if i == j:
-                    self.dens[i] += 1
-                    self.densN[i] += 1
-                else:
-                    dis = (self.pos[i] - self.pos[j]).norm()
-                    if 0 < dis < self.K_smoothingRadius:
-                        q = 1 - dis / self.K_smoothingRadius
-                        q2 = q * q
-                        q3 = q2 * q
-                        # print(dist[i], q)
-                        self.dens[i] += q2
-                        self.dens[j] += q2
-                        self.densN[i] += q3
-                        self.densN[j] += q3
+            self.dens[i] = 1
+            self.densN[i] = 1
+
+        for i in range(self.num_particles - 1):
+            for j in range(self.num_pair[i]):
+                q = 1 - self.dist[i, j] / self.K_smoothingRadius
+                q2 = q * q
+                q3 = q2 * q
+                # print(dist[i], q)
+                self.dens[i] += q2
+                self.dens[self.pair[i, j]] += q2
+                self.densN[i] += q3
+                self.densN[self.pair[i, j]] += q3
 
         # update pressure
         for i in range(self.num_particles):
@@ -218,23 +228,19 @@ class SPH_Simulator:
             self.pressN[i] = self.K_stiffN * self.densN[i]
 
         # apply pressure
-        for i in range(self.num_particles):
-            for j in range(i, self.num_particles):
-                if i != j:
-                    dis = (self.pos[i] - self.pos[j]).norm()
-                    if 0 < dis < self.K_smoothingRadius:
-                        # index of particle i & j
-                        p = self.press[i] + self.press[j]
-                        pN = self.pressN[i] + self.pressN[j]
+        for i in range(self.num_particles - 1):
+            for j in range(self.num_pair[i]):
+                p = self.press[i] + self.press[self.pair[i, j]]
+                pN = self.pressN[i] + self.pressN[self.pair[i, j]]
 
-                        q = 1 - dis / self.K_smoothingRadius
-                        q2 = q * q
+                q = 1 - self.dist[i, j] / self.K_smoothingRadius
+                q2 = q * q
 
-                        displace = (p * q + pN * q2) * (self.dt ** 2)
-                        a2bN = (self.pos[i] - self.pos[j]) / dis
+                displace = (p * q + pN * q2) * (self.dt ** 2)
+                a2bN = (self.pos[i] - self.pos[self.pair[i, j]]) / self.dist[i, j]
 
-                        self.pos[i] += displace * a2bN
-                        self.pos[j] -= displace * a2bN
+                self.pos[i] += displace * a2bN
+                self.pos[self.pair[i, j]] -= displace * a2bN
 
     @ti.kernel
     def restore_position(self):
