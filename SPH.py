@@ -11,30 +11,27 @@ ti.init(arch = ti.cuda)
 num_particles = 2500
 
 #delta t
-dt = 0.001
+dt = 0.0001
 
 gravity = -50
 
 # interaction radius
-K_smoothingRadius = 2
+K_smoothingRadius = 0.02
 
 # stiffness
-K_stiff = 1000 # stiffness
-K_stiffN = 2000 # stiffness near
+K_stiff = 100 # stiffness
+K_stiffN = 200 # stiffness near
 
 # rest density
-K_restDensity = 4
+K_restDensity = 8
 
 restitution = -0.5
 
 # domain scale (0, 0) - (domain_size, domain_size)
 # used to convert positions into canvas coordinates
-domain_size = 100
+domain_size = 1
 
-#img = np.transpose(ti.imread("starry.jpg"), (1, 0, 2)).reshape(-1, 3)
-img = np.zeros((50, 50, 3)).reshape(-1, 3) + 255
-# rgb 2 hex
-img = img[:, 0] * 65536 + img[:, 1] * 256 + img[:, 2]
+
 
 ''' Fields '''
 # positions of particles
@@ -61,10 +58,16 @@ dist = ti.field(dtype=ti.f32, shape=(num_particles - 1, max_pairs)) # store dist
 num_pair = ti.field(dtype=ti.i32, shape=(num_particles - 1,)) # number of pairs
 
 # Eularian grid
-grid_size = domain_size // K_smoothingRadius # The grid has size (grid_size, grid_size)
+grid_size = int(domain_size / K_smoothingRadius) # The grid has size (grid_size, grid_size)
 print("grid size:", grid_size)
 grid_v = ti.Vector.field(2, dtype = ti.f32, shape = (grid_size, grid_size)) # grid to store P2G attributes
 grid_w = ti.field(dtype = ti.f32, shape = (grid_size, grid_size)) # grid to store the sum of weights
+#img = np.transpose(ti.imread("starry.jpg"), (1, 0, 2)).reshape(-1, 3)
+#img = np.zeros((grid_size, grid_size, 3)).reshape(-1, 3) + 255
+img = np.ones((num_particles, 3)) * 255
+# rgb 2 hex
+img = img[:, 0] * 65536 + img[:, 1] * 256 + img[:, 2]
+print(img.shape)
 
 ''' initialize particle position & velocity '''
 @ti.kernel
@@ -112,6 +115,7 @@ def update():
     # apply viscosity
     a = 2000
     b = 40
+
     for i in range(num_particles - 1):
         for j in range(i + 1, num_particles):
             distance = (pos[i] - pos[j]).norm()
@@ -123,6 +127,7 @@ def update():
                     I = dt * (1-q) * (a*u + b*u*u) * r_ij
                     vel[i] -= I/2
                     vel[j] += I/2
+
 
     # position update
     for i in range(num_particles):
@@ -137,6 +142,7 @@ def update():
                 pair[i, num_pair[i]] = j
                 dist[i, num_pair[i]] = distance
                 num_pair[i] += 1
+
 
     # compute density
     for i in range(num_particles):
@@ -153,6 +159,7 @@ def update():
             dens[pair[i, j]] += q2
             densN[i] += q3
             densN[pair[i, j]] += q3
+
 
     # update pressure
     for i in range(num_particles):
@@ -174,8 +181,6 @@ def update():
 
             pos[i] += displace * a2bN
             pos[pair[i, j]] -= displace * a2bN
-
-
 
 
 ''' handle particle collision with boundary '''
