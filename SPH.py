@@ -11,25 +11,25 @@ ti.init(arch = ti.cuda)
 num_particles = 2500
 
 #delta t
-dt = 0.0001
+dt = 0.001
 
 gravity = -50
 
 # interaction radius
-K_smoothingRadius = 0.02
+K_smoothingRadius = 2
 
 # stiffness
-K_stiff = 100 # stiffness
-K_stiffN = 200 # stiffness near
+K_stiff = 1000 # stiffness
+K_stiffN = 2000 # stiffness near
 
 # rest density
-K_restDensity = 8
+K_restDensity = 4
 
 restitution = -0.5
 
 # domain scale (0, 0) - (domain_size, domain_size)
 # used to convert positions into canvas coordinates
-domain_size = 1
+domain_size = 100
 
 
 
