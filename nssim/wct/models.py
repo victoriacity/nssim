@@ -179,7 +179,6 @@ class VGGEncoder(nn.Module):
         out = self.conv3_4(out)
         pool3 = self.relu3_4(out)
         out, pool3_idx = self.maxpool3(pool3)
-        
         out = self.pad4_1(out)
         out = self.conv4_1(out)
         out = self.relu4_1(out)

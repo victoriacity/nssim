@@ -9,7 +9,7 @@ performs fluid simulation and optimized the
 particle field towards a target image.
 '''
 @ti.data_oriented
-class SPH_Simulator:
+class SPHSimulator2D:
 
     buffer = 0.02
 
@@ -19,7 +19,7 @@ class SPH_Simulator:
     Note: OpenGL and CUDA are different Taichi devices.
     '''
     def __init__(self, device, num_particles=32768, grid_size=192,
-            dt = 0.0001):
+            dt = 0.0001, lr=0.1):
         device = device.lower()
         if device == "cuda":
             self.device = ti.cuda
@@ -34,14 +34,15 @@ class SPH_Simulator:
         self.K_smoothingRadius = 0.02
         self.K_stiff = 100  # stiffness
         self.K_stiffN = 200  # stiffness near
-        self.viscosity_a = 2000
-        self.viscosity_b = 40
-        self.K_restDensity = 6.5 # rest density
+        self.viscosity_a = 20
+        self.viscosity_b = 4
+        self.K_restDensity = 8 # rest density
         self.restitution = -0.5
         self.domain_size = 1
         self.grid_size = grid_size#self.domain_size // self.K_smoothingRadius
         self.dt = dt
-        self.lr = 10
+        self.lr_sim = lr
+        self.lr_init = lr * 50
         self.gravity = -9.8
 
         # other quantities
@@ -106,7 +107,7 @@ class SPH_Simulator:
                 #self.particle_update() # update with predicted velocity
                 self.p2g() # convert to grid representation
                 self.grid_step()
-            self.grad_step(False) # apply gradient descend to color and velocity
+            self.grad_step(False, self.lr_sim) # apply gradient descend to color and velocity
             #self.restore_position() # undo the original position update
             self.particle_update() # update position with the new velocity
         self.frame += 1
@@ -121,9 +122,20 @@ class SPH_Simulator:
             with ti.Tape(self.loss):
                 self.p2g()  # convert to grid representation
                 self.grid_step()
-            self.grad_step(True)
+            self.grad_step(True, self.lr_init)
         self.frame += 1
-            
+    
+    '''
+    Returns the input to stylization.
+    '''
+    def get_fields(self):
+        return self.density_field()
+
+    '''
+    Sets the optimization target
+    '''
+    def set_target(self, target):
+        self.target.from_numpy(target)
 
     '''
     Returns the density field of the simulation
@@ -277,12 +289,12 @@ class SPH_Simulator:
 
     ''' gradient descent'''
     @ti.kernel
-    def grad_step(self, step_velocity : ti.Template()):
+    def grad_step(self, step_velocity : ti.Template(), lr: ti.f32):
         for i in self.col:
-            self.col[i] -= self.lr * self.col.grad[i]
+            self.col[i] -= lr * self.col.grad[i]
             self.col[i] = min(max(0, self.col[i]), 1) # prevent negative colors
             if step_velocity:
-                self.vel[i] -= 0.001 * self.lr * self.vel.grad[i]
+                self.vel[i] -= self.dt * lr * self.vel.grad[i]
                 for d in ti.static(range(DIM)):
                     self.vel[i][d] = min(max(self.vel[i][d], -self.vlim), self.vlim)
 
@@ -309,7 +321,7 @@ class SPH_Simulator:
         for I in ti.grouped(self.grid_m):
             if self.grid_m[I] > 0:
                 self.grid_c[I] = self.grid_c[I] / self.grid_m[I]
-                self.loss[None] += ((self.target[I] - self.grid_c[I]) ** 2).sum() / (self.grid_size ** 2)
+                self.loss[None] += ((self.target[I] - self.grid_c[I]) ** 2).sum() / self.grid_size
 
 
 # main function for debugging

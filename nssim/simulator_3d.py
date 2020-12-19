@@ -1,7 +1,7 @@
 import taichi as ti
 import numpy as np
 
-DIM = 2
+DIM = 3
 
 '''
 A differentiable simulator program which 
@@ -9,7 +9,7 @@ performs fluid simulation and optimized the
 particle field towards a target image.
 '''
 @ti.data_oriented
-class MPMSimulator2D:
+class MPMSimulator3D:
 
     '''
     Initializes the simulator which runs on 
@@ -17,7 +17,7 @@ class MPMSimulator2D:
     Note: OpenGL and CUDA are different Taichi devices.
     '''
     def __init__(self, device, num_particles=32768, grid_size=192,
-            dt = 0.0001, lr=0.1):
+            dt=0.0001, lr=0.1):
         device = device.lower()
         if device == "cuda":
             self.device = ti.cuda
@@ -38,11 +38,12 @@ class MPMSimulator2D:
         self.gravity = -9.8
         # other quantities
         self.inv_dx = self.grid_size / self.domain_size
-        self.particle_vol = (0.5 * self.domain_size / self.grid_size) ** DIM
+        self.dam_length = 0.5
+        self.particle_vol = (self.dam_length * self.domain_size / self.grid_size) ** DIM
         self.particle_rho = 1
         self.particle_mass = self.particle_vol * self.particle_rho
         self.E = 400
-        self.vlim = self.domain_size / (self.grid_size * DIM * self.dt) * 0.5
+        self.vlim = self.domain_size / (self.grid_size * DIM * self.dt)
         self.frame = 0
 
         # Taichi fields
@@ -53,12 +54,14 @@ class MPMSimulator2D:
         self.J = ti.field(dtype=ti.f32, shape=self.num_particles)
 
         self.grid_v = ti.Vector.field(DIM
-        , dtype=ti.f32, shape=(self.grid_size, self.grid_size), needs_grad=True)
-        self.grid_m = ti.field(dtype=ti.f32, shape=(self.grid_size, self.grid_size), needs_grad=True)
-        self.grid_c = ti.Vector.field(3, dtype=ti.f32, shape=(self.grid_size, self.grid_size), needs_grad=True)
+        , dtype=ti.f32, shape=(self.grid_size, self.grid_size, self.grid_size), needs_grad=True)
+        self.grid_m = ti.field(dtype=ti.f32, shape=(self.grid_size, self.grid_size, self.grid_size), needs_grad=True)
+        self.grid_c = ti.Vector.field(3, dtype=ti.f32, shape=(self.grid_size, self.grid_size, self.grid_size), needs_grad=True)
+        
 
-        self.target = ti.Vector.field(3, dtype=ti.f32, shape=(self.grid_size, self.grid_size))
         self.loss = ti.field(dtype=ti.f32, shape=(), needs_grad=True)
+        
+        self.renderer = None
                 
     
     '''
@@ -82,13 +85,13 @@ class MPMSimulator2D:
     Updates the simulation by one frame. One frame
     may include multiple substeps.
     '''
-    def step(self, substep=20):
+    def step(self, substep=10):
         for _ in range(substep):
             self.clear_grid()
-            with ti.Tape(self.loss):
-                self.p2g()
-                self.grid_step()
+            self.renderer.calc_loss()
             self.grad_step(False, self.lr_sim)
+            self.p2g()
+            self.grid_step()
             self.particle_update()
             self.g2p()
         self.frame += 1
@@ -100,24 +103,13 @@ class MPMSimulator2D:
     def optimize(self, substep=20):
         for _ in range(substep):
             self.clear_grid()
-            with ti.Tape(self.loss):
-                self.p2g()
-                self.grid_step()
-            self.grad_step(True, self.lr_init)
+            self.renderer.calc_loss()
+            self.grad_step(False, self.lr_init)
+            #self.p2g()
+            #self.grid_step()
+            
         self.frame += 1
             
-
-    '''
-    Returns the input to stylization.
-    '''
-    def get_fields(self):
-        return self.density_field()
-
-    '''
-    Sets the optimization target
-    '''
-    def set_target(self, target):
-        self.target.from_numpy(target)
 
     '''
     Returns the density field of the simulation
@@ -134,18 +126,35 @@ class MPMSimulator2D:
         return self.grid_c.to_numpy()
 
     '''
+    Returns the input to stylization.
+    '''
+    def get_fields(self):
+        weights = self.renderer.camera_sty.weight.to_numpy()
+        return weights / np.max(weights)
+
+    '''
+    Sets the optimization target
+    '''
+    def set_target(self, target):
+        self.renderer.target.from_numpy(target)
+
+    '''
     ====== Taichi kernels and functions =======
     '''
     @ti.kernel
     def particle_init(self):
+        n_axis = ti.ceil(self.num_particles ** (1/3))
         for i in range(self.num_particles):
             length = self.num_particles ** (1 / DIM)
             # place particles around the center of the domain
-            self.pos[i] = ti.Vector([i % length / length, i // length / length])  # 0 - 1
-            self.pos[i] = (self.pos[i] + 1) / 2 - 0.05# + ti.random() * 0.001  # 0.25 - 0.75 (centered)
-            self.pos[i][1] -= 0.35
-            self.pos[i] *= self.domain_size  # scale to fit the domain
+            self.pos[i][2] = i // n_axis ** 2
+            self.pos[i][1] = i % n_axis ** 2 // n_axis
+            self.pos[i][0] = i % n_axis
+            self.pos[i] = self.dam_length * self.pos[i] / n_axis + 0.1 # put fluid block to the corner
+            self.pos[i][0] += 0.03
+            self.pos[i] *= self.domain_size # scale to fit the domain    
             self.J[i] = 1
+            self.col[i] = ti.Vector([0.6, 0.6, 0.6])
 
     @ti.kernel
     def clear_grid(self):
@@ -166,7 +175,7 @@ class MPMSimulator2D:
             self.col[i] -= lr * self.col.grad[i]
             self.col[i] = min(max(0, self.col[i]), 1) # prevent negative colors
             if step_velocity:
-                self.vel[i] -= self.dt * lr * self.vel.grad[i]
+                self.vel[i] -= 0.001 * lr * self.vel.grad[i]
                 for d in ti.static(range(DIM)):
                     self.vel[i][d] = min(max(self.vel[i][d], -self.vlim), self.vlim)
 
@@ -182,8 +191,8 @@ class MPMSimulator2D:
             w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
             stress = -self.dt * self.particle_vol * (self.J[i] - 1) * 4 * self.E * self.inv_dx * self.inv_dx
             affine = ti.Matrix.identity(float, DIM) * stress + self.aff[i] * self.particle_mass
-            for dX in ti.static(ti.ndrange(3, 3)): 
-                weight = w[dX[0]][0] * w[dX[1]][1]
+            for dX in ti.static(ti.ndrange(3, 3, 3)): 
+                weight = w[dX[0]][0] * w[dX[1]][1] * w[dX[2]][2]
                 offset_x = (dX - fx) / self.inv_dx
                 self.grid_v[base + dX] += weight * (self.particle_mass * self.vel[i] + affine @ offset_x)
                 self.grid_m[base + dX] += weight * self.particle_mass
@@ -204,7 +213,7 @@ class MPMSimulator2D:
                     if cond:
                         self.grid_v[I][d] = 0
             # ================= compute loss ====================
-            self.loss[None] += ((self.target[I] - self.grid_c[I]) ** 2).sum() / self.grid_size
+            #self.loss[None] += ((self.target[I] - self.grid_c[I]) ** 2).sum() / (self.grid_size ** 2)
             # ===================================================
 
     @ti.kernel
@@ -219,9 +228,9 @@ class MPMSimulator2D:
             #new_c = ti.Vector.zero(float, 3)
             # =====================================
             new_A = ti.Matrix.zero(float, DIM, DIM)
-            for dX in ti.static(ti.ndrange(3, 3)):
+            for dX in ti.static(ti.ndrange(3, 3, 3)):
                 offset_X = dX - fx
-                weight = w[dX[0]][0] * w[dX[1]][1]
+                weight = w[dX[0]][0] * w[dX[1]][1] * w[dX[2]][2]
                 new_v += weight * self.grid_v[base + dX]
                 # =====================================
                 #new_c += weight * grid_c[base + dX]
@@ -231,6 +240,4 @@ class MPMSimulator2D:
             self.aff[i] = new_A
             self.J[i] *= 1 + self.dt * self.aff[i].trace()
 
-
-# default simulator
-Simulator = MPMSimulator2D
+    

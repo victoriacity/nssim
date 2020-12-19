@@ -15,13 +15,14 @@ class Stylizer:
     Initializes the stylizer which runs on 
     device DEVICE.
     '''
-    def __init__(self, device : str):
+    def __init__(self, device : str, size: int):
         self.device = device
         self.model = PhotoWCT()
         self.model.load_state_dict(torch.load("../model.pth")) # TODO: remove hardcode
         self.model.to(self.device)
         self.cont_img = None
         self.styl_img = None
+        self.size = size
     
     '''
     Image loader function
@@ -29,20 +30,31 @@ class Stylizer:
     def __load(self, img):
         if type(img) == str:
             img = Image.open(img).convert('RGB')
+            # resize if necessary
+            img = img.resize((self.size, self.size))
             img = transforms.ToTensor()(img)
+            
         if isinstance(img, np.ndarray):
             # unsqueeze 2d array
             img = torch.from_numpy(img)
         if isinstance(img, torch.Tensor):
-            if len(img.shape) == 2:
+            if len(img.shape) == 2: # HW -> NCHW
                 img = img.repeat(3, 1, 1)
-            # convert HWC to CHW shape
-            elif img.shape[2] == 1 or img.shape[2] == 3:
-                img = img.permute(2, 0, 1)
+                img = img.unsqueeze(0)
+            elif len(img.shape) == 3: 
+                if img.shape[2] == 1 or img.shape[2] == 3: # HWC->CHW
+                    img = img.permute(2, 0, 1)
+                    img = img.unsqueeze(0) #CHW -> NCHW
+                elif img.shape[0] != 3:
+                    img = img.unsqueeze(1) # NHW -> NCHW
+                    img = img.repeat(1, 3, 1, 1) 
+                else:
+                    img = img.unsqueeze(0)
+            elif img.shape[3] == 1 or img.shape[3] == 3: # NWHC ->NCHW
+                img = img.permute(0, 3, 1, 2)
+
         else:
             raise ValueError("Image type not understood")
-        # add a batch size dimension to BCHW shape
-        img = img.unsqueeze(0)
         img = img.to(self.device)
         return img
 
@@ -66,8 +78,8 @@ class Stylizer:
     '''
     def run(self):
         with torch.no_grad():
-            result = self.model.transform(self.cont_img, self.styl_img).squeeze(0).cpu()
+            result = self.model.transform(self.cont_img, self.styl_img).cpu()
         # must make contiguous to be sent through MPI
-        result = result.permute(1, 2, 0).contiguous().numpy()
+        result = result.permute(0, 2, 3, 1).contiguous().numpy()
         return result
 
