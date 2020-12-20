@@ -34,7 +34,7 @@ class MPMSimulator2D:
         self.domain_size = 1
         self.dt = dt
         self.lr_sim = lr
-        self.lr_init = lr * 50
+        self.lr_init = max(2, lr * 50)
         self.gravity = -9.8
         # other quantities
         self.inv_dx = self.grid_size / self.domain_size
@@ -161,12 +161,12 @@ class MPMSimulator2D:
 
     ''' gradient descent'''
     @ti.kernel
-    def grad_step(self, step_velocity : ti.Template(), lr: ti.f32):
+    def grad_step(self, is_init : ti.Template(), lr: ti.f32):
         for i in self.col:
             self.col[i] -= lr * self.col.grad[i]
             self.col[i] = min(max(0, self.col[i]), 1) # prevent negative colors
-            if step_velocity:
-                self.vel[i] -= self.dt * lr * self.vel.grad[i]
+            self.vel[i] -= min(max(10 * self.dt * self.gravity, lr * self.vel.grad[i]), -10 * self.dt * self.gravity)
+            if is_init:
                 for d in ti.static(range(DIM)):
                     self.vel[i][d] = min(max(self.vel[i][d], -self.vlim), self.vlim)
 
@@ -193,6 +193,7 @@ class MPMSimulator2D:
     @ti.kernel
     def grid_step(self):
         for I in ti.grouped(self.grid_m):
+            
             if self.grid_m[I] > 0:
                 self.grid_v[I] = self.grid_v[I] / self.grid_m[I]  # change this grid_v as well
                 self.grid_v[I][1] += self.gravity * self.dt
