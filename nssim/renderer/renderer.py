@@ -19,7 +19,7 @@ class ParticleSplattingRenderer:
         self.epsilon = 1.5 * self.radius
 
         ''' directional light '''
-        self.camera_main = Camera(res=(main_res, main_res), pos=[0.5, 0.5, 2], target=[0.5, 0.5, 0.5])
+        self.camera_main = Camera(res=(main_res, main_res), pos=[1, 1, 2], target=[0.5, 0.5, 0.5])
         self.camera_main.add_buffer("zbuf", dim=0, dtype=float)
         self.camera_main.add_buffer("weight", dim=0, dtype=float)
         self.camera_main.add_buffer("normal", dim=3, dtype=float)
@@ -191,7 +191,12 @@ class ParticleSplattingRenderer:
                 # reflection 
                 refldir = viewdir - 2 * viewdir.dot(normal) * normal
                 if refldir[1] > 0:
-                    camera.img[I] += min(0.05, refldir[1] * 5) * sample_sky(rayorig, viewdir)
+                    camera.img[I] += min(0.05, refldir[1] * 5) * sample_sky(rayorig, refldir)
+                else:
+                    fragpos = camera.uncook(ti.Vector([I.x, I.y, camera.zbuf[I]]).cast(float))
+                    fragpos_w = xyz(camera.L2W[None] @ ti.Vector([fragpos.x, fragpos.y, camera.zbuf[I], 1]))
+                    col, _ = sample_floor(floor_height, fragpos_w, viewdir, -viewdir)
+                    camera.img[I] += min(0.05, -refldir[1] * 5) * col 
             else:
                 # use simple raycast to render background
                 camera.img[I] = sample_sky(rayorig, viewdir)

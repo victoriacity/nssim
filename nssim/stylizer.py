@@ -1,7 +1,7 @@
 import torch
 import torchvision.transforms as transforms
 import numpy as np
-from wct import PhotoWCT
+from .wct import PhotoWCT
 from PIL import Image
 '''
 A stylizer program which performs neural
@@ -18,7 +18,7 @@ class Stylizer:
     def __init__(self, device : str, size: int):
         self.device = device
         self.model = PhotoWCT()
-        self.model.load_state_dict(torch.load("../model.pth")) # TODO: remove hardcode
+        self.model.load_state_dict(torch.load("nssim/model.pth"))
         self.model.to(self.device)
         self.cont_img = None
         self.styl_img = None
